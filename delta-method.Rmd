@@ -1,0 +1,100 @@
+---
+title: "delta-method"
+author: "Olivier Gimenez"
+date: "04/01/2019"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Calculate the standard error of any function using the delta-method
+
+I keep forgetting how to implement the delta-method in `R`. So in this post I go through two examples that should help me remembering. I use the `deltamethod` function from the [`msm` package](https://cran.r-project.org/web/packages/msm/index.html). 
+
+Load the package `msm` and get some help on the delta-method function:
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(msm)
+?deltamethod
+```
+
+Further examples can be obtained by typing in:
+```{r message=FALSE, warning=FALSE, paged.print=FALSE, eval=FALSE}
+example(deltamethod)
+```
+
+For a nice introduction to the delta-method, check [that](http://www.phidot.org/software/mark/docs/book/pdf/app_2.pdf) out.
+
+
+### Simple example
+
+A simple example is when, for example, you get $\phi$ (ignore the traditional hat) an estimate of a survival probability on the logit scale in some capture-recapture analyses, and you would like to get the standard error (SE) of survival on its natural scale. 
+
+For example, say $\text{logit}(\phi) = \text{lphi} = -0.4473122$ with $\text{SE} = 0.3362757$. 
+
+To obtain $\phi$, you back-transform $\text{lphi}$ using the reciprocal function of the logit function: $$\phi = \displaystyle{\frac{\exp(\text{lphi})}{1+\exp(\text{lphi})}} =  \displaystyle{\frac{1}{1+\exp(\text{-lphi})}} = \displaystyle{\frac{1}{1+\exp(\text{-(-0.4473122)})}} = 0.39.$$
+
+What about the SE of $\phi$? Well, a direct application of the `deltamethod` function from the `msm` package gives the answer:
+```{r}
+deltamethod(~ 1/(1+exp(-x1)), -0.4473122, 0.3362757^2)
+```
+
+Two things to take care of: 
+
+* First, the variables in the formula must be labelled $x_1, x_2, \text{text}$. You cannot use $x, y, z, ...$ for example. Just numbered $x$'s.
+
+* Second, the input parameters are the estimate and its squared SE (not the SE), and by default you will get as an output the SE (not the squared SE) of the function defined by the formula. 
+
+## Complex example
+
+This example deals with an occupancy model. It is a bit more complex than the previous example because we consider a function of several parameters for which we would like to calculate its SE. I assume that occupancy at first occasion was estimated along with its SE, and that one would like to obtain the SE of subsequent occupancy probabilities.
+
+I calculate time-dependent occupancy probabilities with the following formula $$\psi_{t+1} = \psi_t (1 - \varepsilon) + (1 - \psi_t) \gamma$$ where $\varepsilon$ is extinction, $\gamma$ is colonisation and $\psi_t$ is occupancy year $t$.
+
+We assume that we obtained the following parameter estimates:
+```{r}
+epsilon = 0.39
+gamma = 0.07
+psi_init = 0.1 # first-occasion occupancy
+```
+
+with corresponding SEs:
+```{r}
+se_epsilon = 0.08
+se_psi_init = 0.01
+se_gamma = 0.05
+```
+
+We will estimate occupancy and get SEs at 10 occasions, which we store in two matrices (column vectors):
+```{r}
+psi = matrix(0, nrow = 10, ncol = 1)
+psi_se = matrix(0, nrow = 10, ncol = 1)
+```
+
+The first element is occupancy at first occasion:
+```{r}
+psi[1,] <- psi_init
+psi_se[1,] <- se_psi_init
+```
+
+Then we iterate calculations using the formula above:
+```{r}
+for(i in 2:10){
+	psi_current <- psi[i-1,]
+	psi_se_current <- psi_se[i-1,]
+	estmean <- c(psi_current,epsilon,gamma)
+	estvar <- diag(c(psi_se_current,se_epsilon,se_gamma)^2)
+	psi[i,] = (psi_current*(1-epsilon)) + ((1-psi_current)*gamma) # recurrence formula
+	psi_se[i,] = deltamethod(~ x1*(1-x2) + (1-x1)*x3, estmean, estvar) # delta-method
+}
+```
+
+Display results:
+```{r}
+data.frame(psi = psi,sterr_psi = psi_se)
+```
+
+Here, we assumed that sampling correlation was 0, in other words that the estimates of $\psi$, $\gamma$ and $\epsilon$ were independent, hence the use of a diagonal matrix for `estvar`. It is possible to use a non-diagonal covariance matrix to account for non-null correlation.
